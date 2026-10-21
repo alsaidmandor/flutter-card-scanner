@@ -161,6 +161,7 @@ class CardOverlayPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CardOverlayPainter oldDelegate) {
     return oldDelegate.cardAspectRatio != cardAspectRatio ||
+        oldDelegate.widthFactor != widthFactor ||
         oldDelegate.cornerColor != cornerColor ||
         oldDelegate.overlayColor != overlayColor ||
         oldDelegate.scanLineProgress != scanLineProgress;
