@@ -2,6 +2,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:gal/gal.dart';
+import 'package:path_provider/path_provider.dart';
 import 'card_overlay_painter.dart';
 
 enum ScanMode {
@@ -33,6 +35,7 @@ class _CardScannerScreenState extends State<CardScannerScreen>
   CameraController? _controller;
   bool _isCameraInitialized = false;
   bool _isFlashOn = false;
+  bool _isCapturing = false;
   int _selectedCameraIndex = 0;
   ScanMode _scanMode = ScanMode.idCard;
   Color _cornerColor = const Color(0xFF34D399); // Emerald green
@@ -118,6 +121,8 @@ class _CardScannerScreenState extends State<CardScannerScreen>
   }
 
   Future<void> _captureCard() async {
+    if (_isCapturing) return;
+
     if (_controller == null || !_controller!.value.isInitialized) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -128,19 +133,53 @@ class _CardScannerScreenState extends State<CardScannerScreen>
       return;
     }
 
+    setState(() => _isCapturing = true);
+
     try {
-      final XFile image = await _controller!.takePicture();
+      // 1. Take raw photo with camera
+      final XFile tempImage = await _controller!.takePicture();
+
+      // 2. Save permanently to app documents directory
+      final Directory appDir = await getApplicationDocumentsDirectory();
+      final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      final String fileName = 'scanned_${_scanMode.name}_$timestamp.jpg';
+      final String permanentPath = '${appDir.path}/$fileName';
+
+      final File permanentFile = await File(tempImage.path).copy(permanentPath);
+
+      // 3. Save to device Gallery / Camera Roll
+      bool savedToGallery = false;
+      try {
+        await Gal.putImage(permanentFile.path, album: 'CardScanner');
+        savedToGallery = true;
+      } catch (galError) {
+        debugPrint("Gallery save note: $galError");
+      }
+
       if (!mounted) return;
 
-      _showCapturedDialog(image);
+      _showCapturedDialog(permanentFile, savedToGallery: savedToGallery);
     } catch (e) {
       debugPrint("Capture error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Error saving image: $e"),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isCapturing = false);
+      }
     }
   }
 
-  void _showCapturedDialog(XFile image) {
+  void _showCapturedDialog(File imageFile, {required bool savedToGallery}) {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: const Color(0xFF1E242C),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -166,7 +205,7 @@ class _CardScannerScreenState extends State<CardScannerScreen>
                     Icon(Icons.check_circle, color: Color(0xFF34D399), size: 24),
                     SizedBox(width: 8),
                     Text(
-                      "Card Captured Successfully",
+                      "Saved to Device!",
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 18,
@@ -175,26 +214,106 @@ class _CardScannerScreenState extends State<CardScannerScreen>
                     ),
                   ],
                 ),
+                const SizedBox(height: 12),
+
+                // Success Status Badges
+                Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF34D399).withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF34D399).withValues(alpha: 0.3)),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.folder_outlined, color: Color(0xFF34D399), size: 16),
+                            SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                "App Storage",
+                                style: TextStyle(color: Color(0xFF34D399), fontSize: 11, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: savedToGallery
+                              ? Colors.blueAccent.withValues(alpha: 0.15)
+                              : Colors.white10,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: savedToGallery
+                                ? Colors.blueAccent.withValues(alpha: 0.3)
+                                : Colors.white24,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              savedToGallery ? Icons.photo_library_outlined : Icons.info_outline,
+                              color: savedToGallery ? Colors.blueAccent : Colors.white70,
+                              size: 16,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                savedToGallery ? "Photo Gallery" : "Storage Only",
+                                style: TextStyle(
+                                  color: savedToGallery ? Colors.blueAccent : Colors.white70,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 16),
+
+                // Image Preview
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
                   child: AspectRatio(
                     aspectRatio: _scanMode.ratio,
-                    child: kIsWeb
-                        ? Image.network(image.path, fit: BoxFit.cover)
-                        : Image.file(File(image.path), fit: BoxFit.cover),
+                    child: Image.file(imageFile, fit: BoxFit.cover),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // File Path Info
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.black26,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.white10),
+                  ),
+                  child: Text(
+                    "📁 ${imageFile.path}",
+                    style: const TextStyle(color: Colors.white60, fontSize: 11, fontFamily: 'monospace'),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 const SizedBox(height: 16),
-                Text(
-                  "Saved to: ${image.path}",
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white60, fontSize: 12),
-                ),
-                const SizedBox(height: 16),
+
+                // Actions
                 SizedBox(
                   width: double.infinity,
-                  child: ElevatedButton(
+                  child: ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF34D399),
                       foregroundColor: Colors.black,
@@ -204,7 +323,8 @@ class _CardScannerScreenState extends State<CardScannerScreen>
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
                     onPressed: () => Navigator.pop(ctx),
-                    child: const Text("Scan Another Card", style: TextStyle(fontWeight: FontWeight.bold)),
+                    icon: const Icon(Icons.camera_alt_outlined),
+                    label: const Text("Scan Another Card", style: TextStyle(fontWeight: FontWeight.bold)),
                   ),
                 ),
               ],
@@ -266,6 +386,25 @@ class _CardScannerScreenState extends State<CardScannerScreen>
               ],
             ),
           ),
+
+          // Layer 4: Loading Indicator when capturing & saving
+          if (_isCapturing)
+            Container(
+              color: Colors.black54,
+              child: const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(color: Color(0xFF34D399)),
+                    SizedBox(height: 16),
+                    Text(
+                      "Saving to device...",
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );

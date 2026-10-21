@@ -6,6 +6,8 @@
 	<string>Camera access is needed to scan cards and documents.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Microphone access may be used when recording.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Permission is needed to save scanned card images to your Photos gallery.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
